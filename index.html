@@ -1,0 +1,187 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Lineare Regression – Simulation</title>
+<style>
+  * { box-sizing: border-box; }
+  body { margin: 0; padding: 24px; font: 16px/1.5 system-ui, sans-serif; color: #172033; background: #f3f6fb; }
+  main { max-width: 900px; margin: 0 auto; padding: 24px; background: white; border-radius: 16px; box-shadow: 0 8px 30px #17203314; }
+  h1 { margin: 0 0 8px; font-size: 1.6rem; }
+  .intro { margin: 0 0 20px; color: #536176; }
+  .layout { display: grid; grid-template-columns: minmax(0, 1.5fr) minmax(250px, 1fr); gap: 24px; align-items: start; }
+  svg { display: block; width: 100%; height: auto; border: 1px solid #e3e8f0; border-radius: 10px; background: white; touch-action: none; }
+  .controls { padding: 18px; background: #f7f9fc; border-radius: 12px; }
+  label { display: block; margin: 14px 0 5px; font-weight: 650; }
+  input[type="range"] { width: 100%; accent-color: #4263eb; }
+  output { color: #2848c7; font-weight: 700; }
+  .metric { margin: 16px 0; padding: 12px; background: white; border-radius: 9px; }
+  .metric strong { display: block; font-size: 1.2rem; }
+  .check { display: flex; gap: 9px; align-items: center; margin-top: 16px; font-weight: 600; }
+  .check input { width: 18px; height: 18px; accent-color: #4263eb; }
+  button { width: 100%; margin-top: 16px; padding: 10px 12px; border: 0; border-radius: 8px; background: #e5eaf5; color: #26344d; font: inherit; font-weight: 650; cursor: pointer; }
+  button:hover { background: #d5deef; }
+  .legend { display: flex; flex-wrap: wrap; gap: 14px; margin: 12px 0; color: #536176; font-size: .9rem; }
+  .key { display: inline-block; width: 18px; height: 3px; margin: 0 5px 3px 0; vertical-align: middle; background: #e5484d; }
+  .key.target { height: 0; border-top: 2px dashed #4263eb; background: none; }
+  .key.point { width: 9px; height: 9px; border-radius: 50%; background: #172033; }
+  .note { margin-top: 16px; color: #536176; font-size: .9rem; }
+  @media (max-width: 680px) {
+    body { padding: 12px; }
+    main { padding: 16px; }
+    .layout { grid-template-columns: 1fr; }
+  }
+</style>
+</head>
+<body>
+<main>
+  <h1>Lineare Regression: Finde die beste Gerade</h1>
+  <p class="intro">Verändere die Steigung mit dem Regler oder ziehe den runden Griff im Diagramm. Die rote Gerade verläuft durch den Ursprung.</p>
+
+  <div class="layout">
+    <section>
+      <svg id="plot" viewBox="0 0 640 440" role="img" aria-label="Diagramm mit zehn gestreuten Messpunkten und verstellbarer Gerade"></svg>
+      <div class="legend">
+        <span><i class="key point"></i>Messpunkte</span>
+        <span><i class="key"></i>Deine Gerade</span>
+        <span><i class="key target"></i>Optimale Gerade</span>
+      </div>
+    </section>
+
+    <section class="controls" aria-label="Regler und Abweichungsanzeige">
+      <label for="slope">Steigung: <output id="slopeValue">1.5</output></label>
+      <input id="slope" type="range" min="0" max="6" step="0.1" value="1.5">
+
+      <label class="check">
+        <input id="showOptimal" type="checkbox">
+        Optimale Gerade anzeigen
+      </label>
+
+      <div class="metric">
+        Quadratische Abweichung (Summe der Fehlerquadrate)
+        <strong id="sse">–</strong>
+      </div>
+      <div class="metric">
+        Aktuelle Gerade
+        <strong id="equation">–</strong>
+      </div>
+
+      <button id="reset" type="button">Zurücksetzen</button>
+    </section>
+  </div>
+
+  <p class="note">Ziehe den runden Griff, um die rote Gerade um den Ursprung zu drehen. Über das Kontrollkästchen kannst du die optimale Gerade ein- oder ausblenden.</p>
+</main>
+
+<script>
+(() => {
+  const xs = [-5, -4, -3, -2, -1, 1, 2, 3, 4, 5];
+  const residuals = [3, -4, 2, -1, 5, -3, 4, -2, 1, 1];
+  const points = xs.map((x, i) => ({x, y: 3 * x + residuals[i]}));
+
+  const svg = document.getElementById("plot");
+  const slope = document.getElementById("slope");
+  const showOptimal = document.getElementById("showOptimal");
+  const slopeValue = document.getElementById("slopeValue");
+  const sseDisplay = document.getElementById("sse");
+  const equation = document.getElementById("equation");
+
+  const W = 640, H = 440;
+  const pad = {l: 52, r: 20, t: 18, b: 42};
+  const xmin = -6, xmax = 6, ymin = -20, ymax = 20;
+  const X = x => pad.l + (x - xmin) / (xmax - xmin) * (W - pad.l - pad.r);
+  const Y = y => H - pad.b - (y - ymin) / (ymax - ymin) * (H - pad.t - pad.b);
+
+  function lineMarkup(m, color, dash, width) {
+    return `<line x1="${X(xmin)}" y1="${Y(m * xmin)}" x2="${X(xmax)}" y2="${Y(m * xmax)}"
+      stroke="${color}" stroke-width="${width}" ${dash ? `stroke-dasharray="${dash}"` : ""}
+      clip-path="url(#clip)"/>`;
+  }
+
+  function render() {
+    const m = Number(slope.value);
+    let content = `<defs><clipPath id="clip"><rect x="${pad.l}" y="${pad.t}" width="${W-pad.l-pad.r}" height="${H-pad.t-pad.b}"/></clipPath></defs>`;
+
+    for (let x = -6; x <= 6; x += 2) {
+      content += `<line x1="${X(x)}" y1="${pad.t}" x2="${X(x)}" y2="${H-pad.b}" stroke="#e8edf4"/>`;
+      content += `<text x="${X(x)}" y="${H-16}" text-anchor="middle" fill="#64748b" font-size="12">${x}</text>`;
+    }
+    for (let y = -20; y <= 20; y += 10) {
+      content += `<line x1="${pad.l}" y1="${Y(y)}" x2="${W-pad.r}" y2="${Y(y)}" stroke="#e8edf4"/>`;
+      content += `<text x="${pad.l-9}" y="${Y(y)+4}" text-anchor="end" fill="#64748b" font-size="12">${y}</text>`;
+    }
+
+    content += `<line x1="${X(0)}" y1="${pad.t}" x2="${X(0)}" y2="${H-pad.b}" stroke="#8290a5" stroke-width="1.4"/>`;
+    content += `<line x1="${pad.l}" y1="${Y(0)}" x2="${W-pad.r}" y2="${Y(0)}" stroke="#8290a5" stroke-width="1.4"/>`;
+    content += `<text x="${W-10}" y="${H-15}" text-anchor="end" fill="#536176" font-size="13">x</text>`;
+    content += `<text x="17" y="24" fill="#536176" font-size="13">y</text>`;
+
+    if (showOptimal.checked) content += lineMarkup(3, "#4263eb", "7 6", 2.5);
+    content += lineMarkup(m, "#e5484d", "", 3);
+
+    content += `<g clip-path="url(#clip)">`;
+    for (const p of points) {
+      content += `<circle cx="${X(p.x)}" cy="${Y(p.y)}" r="5.5" fill="#172033" stroke="white" stroke-width="1.5"/>`;
+    }
+    content += `</g>`;
+
+    const handleX = 2;
+    content += `<circle id="rotateHandle" cx="${X(handleX)}" cy="${Y(m * handleX)}" r="8"
+      fill="#e5484d" stroke="white" stroke-width="3" style="cursor:ns-resize"/>`;
+
+    svg.innerHTML = content;
+
+    let sumSquaredErrors = 0;
+    for (const p of points) {
+      const error = m * p.x - p.y;
+      sumSquaredErrors += error * error;
+    }
+
+    slopeValue.value = m.toFixed(1);
+    sseDisplay.textContent = sumSquaredErrors.toFixed(2);
+    equation.textContent = `y = ${m.toFixed(1)}x`;
+
+    document.getElementById("rotateHandle").addEventListener("pointerdown", event => {
+      event.preventDefault();
+      svg.setPointerCapture(event.pointerId);
+      svg.dataset.dragging = "true";
+    });
+  }
+
+  function pointerToSvg(event) {
+    const rect = svg.getBoundingClientRect();
+    return {
+      x: (event.clientX - rect.left) * W / rect.width,
+      y: (event.clientY - rect.top) * H / rect.height
+    };
+  }
+
+  svg.addEventListener("pointermove", event => {
+    if (svg.dataset.dragging !== "true") return;
+    const p = pointerToSvg(event);
+    const graphY = ymax - ((p.y - pad.t) / (H - pad.t - pad.b)) * (ymax - ymin);
+    const graphX = xmin + ((p.x - pad.l) / (W - pad.l - pad.r)) * (xmax - xmin);
+    if (Math.abs(graphX) < 0.2) return;
+    const newSlope = graphY / graphX;
+    slope.value = Math.max(0, Math.min(6, newSlope)).toFixed(1);
+    render();
+  });
+
+  svg.addEventListener("pointerup", () => { svg.dataset.dragging = "false"; });
+  svg.addEventListener("pointercancel", () => { svg.dataset.dragging = "false"; });
+
+  slope.addEventListener("input", render);
+  showOptimal.addEventListener("change", render);
+
+  document.getElementById("reset").addEventListener("click", () => {
+    slope.value = 1.5;
+    showOptimal.checked = false;
+    render();
+  });
+
+  render();
+})();
+</script>
+</body>
+</html>
